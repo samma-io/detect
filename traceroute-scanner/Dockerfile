@@ -1,7 +1,7 @@
 from ubuntu:latest
 
 RUN apt-get update && apt-get install python3-pip traceroute -y
-RUN pip3 install PyYAML --break-system-packages
+RUN pip3 install PyYAML nats-py --break-system-packages
 
 RUN mkdir /out
 COPY traceroute-scanner/code /code

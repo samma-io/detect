@@ -1,7 +1,7 @@
 from ubuntu:latest
 
 RUN apt-get update && apt-get install python3-pip -y
-RUN pip3 install PyYAML python-whois --break-system-packages
+RUN pip3 install PyYAML python-whois nats-py --break-system-packages
 
 RUN mkdir /out
 COPY whois-scanner/code /code

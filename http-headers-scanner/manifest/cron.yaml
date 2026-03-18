@@ -89,13 +89,19 @@ spec:
               - name: SAMMA_IO_ID
                 value: "00000"
               - name: SAMMA_IO_TAGS
-                value: "['scanner','http-headers-scanner']"
+                value: "scanner,http-headers-scanner"
               - name: SAMMA_IO_JSON
                 value: '{"extra":"value"}'
               - name: WRITE_TO_FILE
                 value: "true"
               - name: PARSER
                 value: http-headers-scanner
+              - name: NATS_ENABLED
+                value: "False"
+              - name: NATS_URL
+                value: "nats://localhost:4222"
+              - name: NATS_SUBJECT
+                value: "samma-io.scan"
             volumeMounts:
               - mountPath: /out
                 name: out-volume

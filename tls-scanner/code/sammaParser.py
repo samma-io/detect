@@ -1,8 +1,12 @@
 import os
 import json
+import asyncio
 
 WRITE_TO_FILE = os.getenv('WRITE_TO_FILE', 'False')
 PARSER = os.getenv('PARSER', 'tls-scanner')
+NATS_ENABLED = os.getenv('NATS_ENABLED', 'False')
+NATS_URL     = os.getenv('NATS_URL', 'nats://localhost:4222')
+NATS_SUBJECT = os.getenv('NATS_SUBJECT', 'samma-io.scan')
 
 
 
@@ -35,6 +39,12 @@ def endThis():
     f.write("time to die")
     f.close()
 
+async def _nats_publish(payload: bytes):
+    import nats
+    nc = await nats.connect(NATS_URL)
+    await nc.publish(NATS_SUBJECT, payload)
+    await nc.drain()
+
 def logger(json_data):
     '''
     This is where we parse our json and
@@ -47,7 +57,8 @@ def logger(json_data):
     json_samma={}
     json_samma['scanner'] = os.getenv('SAMMA_IO_SCANNER', 'tls-scanner')
     json_samma['id'] = os.getenv('SAMMA_IO_ID', '1234')
-    json_samma['tags'] = os.getenv('SAMMA_IO_TAGS', "['scanner']")
+    _tags_raw = os.getenv('SAMMA_IO_TAGS', 'scanner')
+    json_samma['tags'] = [t.strip() for t in _tags_raw.split(',') if t.strip()]
     json_samma['json'] = os.getenv('SAMMA_IO_JSON', '{}')
 
 
@@ -58,5 +69,10 @@ def logger(json_data):
     #If WRITE_TO_FILE != False
     if WRITE_TO_FILE != "False":
         WriteToFile(json_data)
+
+    if NATS_ENABLED != "False":
+        payload = json.dumps(json_data, ensure_ascii=False,
+                             sort_keys=True, separators=(',', ': ')).encode()
+        asyncio.run(_nats_publish(payload))
 
     print(json_data)

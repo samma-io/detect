@@ -11,10 +11,13 @@ services:
       - RECORD_TYPES=A,AAAA,MX,TXT
       - SAMMA_IO_SCANNER=dns-scanner
       - SAMMA_IO_ID=1234
-      - SAMMA_IO_TAGS=['scanner']
+      - SAMMA_IO_TAGS=scanner
       - SAMMA_IO_JSON={}
       - WRITE_TO_FILE=true
       - PARSER=dns-scanner
+      - NATS_ENABLED=False
+      - NATS_URL=nats://localhost:4222
+      - NATS_SUBJECT=samma-io.scan
   #filebeat:
   #  image: docker.elastic.co/beats/filebeat:7.15.0
   #  volumes:
