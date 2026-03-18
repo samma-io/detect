@@ -1,0 +1,39 @@
+scanner:
+  name: port-scanner
+  version: v0.1
+
+output:
+  write_to_file: false
+  out_dir: /out
+  parser: port-scanner
+
+defaults:
+  ports: [80, 443, 8080, 8443]
+  timeout: 3
+
+traceroute-scanner:
+  max_hops: 30
+  timeout: 2
+
+tls-scanner:
+  port: 443
+  timeout: 5
+  verify_cert: true
+
+http-headers-scanner:
+  port: 80
+  https: false
+  timeout: 5
+
+dns-scanner:
+  record_types: [A, AAAA, MX, TXT]
+
+ssh-banner-scanner:
+  port: 22
+  timeout: 5
+
+whois-scanner: {}
+
+http-redirect-scanner:
+  timeout: 5
+  max_redirects: 10

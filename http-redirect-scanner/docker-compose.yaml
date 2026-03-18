@@ -1,0 +1,23 @@
+services:
+  http-redirect-scanner:
+    build:
+      context: ..
+      dockerfile: http-redirect-scanner/Dockerfile
+    image: ghcr.io/samma-io/detect-http-redirect-scanner:latest
+    volumes:
+      - ./out:/out
+    environment:
+      - TARGET=example.com
+      - TIMEOUT=5
+      - MAX_REDIRECTS=10
+      - SAMMA_IO_SCANNER=http-redirect-scanner
+      - SAMMA_IO_ID=1234
+      - SAMMA_IO_TAGS=['scanner']
+      - SAMMA_IO_JSON={}
+      - WRITE_TO_FILE=true
+      - PARSER=http-redirect-scanner
+  #filebeat:
+  #  image: docker.elastic.co/beats/filebeat:7.15.0
+  #  volumes:
+  #    - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+  #    - ./out:/out

@@ -1,0 +1,23 @@
+services:
+  ssh-banner-scanner:
+    build:
+      context: ..
+      dockerfile: ssh-banner-scanner/Dockerfile
+    image: ghcr.io/samma-io/detect-ssh-banner-scanner:latest
+    volumes:
+      - ./out:/out
+    environment:
+      - TARGET=scanme.nmap.org
+      - PORT=22
+      - TIMEOUT=5
+      - SAMMA_IO_SCANNER=ssh-banner-scanner
+      - SAMMA_IO_ID=1234
+      - SAMMA_IO_TAGS=['scanner']
+      - SAMMA_IO_JSON={}
+      - WRITE_TO_FILE=true
+      - PARSER=ssh-banner-scanner
+  #filebeat:
+  #  image: docker.elastic.co/beats/filebeat:7.15.0
+  #  volumes:
+  #    - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+  #    - ./out:/out

@@ -1,0 +1,24 @@
+services:
+  tls-scanner:
+    build:
+      context: ..
+      dockerfile: tls-scanner/Dockerfile
+    image: ghcr.io/samma-io/detect-tls-scanner:latest
+    volumes:
+      - ./out:/out
+    environment:
+      - TARGET=example.com
+      - PORT=443
+      - TIMEOUT=5
+      - VERIFY_CERT=True
+      - SAMMA_IO_SCANNER=tls-scanner
+      - SAMMA_IO_ID=1234
+      - SAMMA_IO_TAGS=['scanner']
+      - SAMMA_IO_JSON={}
+      - WRITE_TO_FILE=true
+      - PARSER=tls-scanner
+  #filebeat:
+  #  image: docker.elastic.co/beats/filebeat:7.15.0
+  #  volumes:
+  #    - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+  #    - ./out:/out

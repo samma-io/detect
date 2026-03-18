@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: live-tr
+  namespace: samma-io
+data:
+  live.sh: |
+      #
+      #
+      # Check if the die file is there and if then die
+      FILE=/out/die
+      if test -f "$FILE"; then
+          echo "$FILE exists. i kill myself"
+          sleep 5
+          kill 1
+      fi
+      exit 0
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-tr
+  namespace: samma-io
+data:
+  filebeat.yml: |
+      #Read diffrent files types from /out folder
+      filebeat.inputs:
+      - type: log
+        paths:
+        - /out/*.json
+        json.keys_under_root: true
+        #json.add_error_key: true
+      - type: log
+        paths:
+        - /out/*.xml
+      - type: log
+        paths:
+        - /out/*.csv
+
+
+      #Output to Elastic
+      output.elasticsearch:
+        hosts: '${ELASTICSEARCH_HOSTS:elasticsearch:9200}'
+        index: samma-io.%{+yyyy.MM.dd}
+
+        #username: '${ELASTICSEARCH_USERNAME:}'
+        #password: '${ELASTICSEARCH_PASSWORD:}'
+
+
+      #output.console:
+      #  pretty: true
+
+
+      #Adding the Samma-io Index and rollover
+      setup.ilm.enabled: auto
+      setup.ilm.rollover_alias: "samma-io"
+      setup.ilm.pattern: "{now/d}-000001"
+      setup.template.name: "samma-io"
+      setup.template.pattern: "samma-io*"
+      logging.level: debug
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: traceroute-scanner
+  namespace: samma-io
+spec:
+  template:
+    spec:
+      containers:
+      - name: traceroute-scanner
+        image: sammascanner/traceroute-scanner:v0.1
+        env:
+          - name: TARGET
+            value: samma.io
+          - name: MAX_HOPS
+            value: "30"
+          - name: TIMEOUT
+            value: "2"
+          - name: SAMMA_IO_SCANNER
+            value: traceroute-scanner
+          - name: SAMMA_IO_ID
+            value: "00000"
+          - name: SAMMA_IO_TAGS
+            value: "['scanner','traceroute-scanner']"
+          - name: SAMMA_IO_JSON
+            value: '{"extra":"value"}'
+          - name: WRITE_TO_FILE
+            value: "true"
+          - name: PARSER
+            value: traceroute-scanner
+        volumeMounts:
+          - mountPath: /out
+            name: out-volume
+      - name: filebeat
+        image: docker.elastic.co/beats/filebeat:7.15.0
+        env:
+          - name: ELASTICSEARCH_HOSTS
+            value: http://elasticsearch:9200
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - '-c'
+              - /live.sh
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: filebeat-tr
+          mountPath: "/usr/share/filebeat/filebeat.yml"
+          subPath: "filebeat.yml"
+        - name: liveness-tr
+          mountPath: "/live.sh"
+          subPath: "live.sh"
+        - mountPath: /out
+          name: out-volume
+      volumes:
+      - name: filebeat-tr
+        configMap:
+          name: filebeat-tr
+      - name: liveness-tr
+        configMap:
+          name: live-tr
+          defaultMode: 0777
+      - name: out-volume
+        emptyDir: {}
+      restartPolicy: Never
+---
