@@ -1,0 +1,6 @@
+apiVersion: v2
+name: detect
+description: Umbrella Helm chart for samma-io detect scanners
+type: application
+version: 0.1.0
+appVersion: "latest"

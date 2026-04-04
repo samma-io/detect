@@ -1,0 +1,80 @@
+nats:
+  enabled: false
+  url: "nats://nats:4222"
+  subject: "samma-io.scan"
+
+image:
+  registry: ghcr.io
+  pullPolicy: IfNotPresent
+
+scanners:
+  port-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 * * * *"
+    job:
+      enabled: false
+    env:
+      PORTS: "80,443,8080,8443"
+      TIMEOUT: "3"
+
+  traceroute-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 1 * * *"
+    job:
+      enabled: false
+    env:
+      MAX_HOPS: "30"
+
+  tls-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 2 * * *"
+    job:
+      enabled: false
+    env:
+      TLS_PORT: "443"
+
+  http-headers-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 3 * * *"
+    job:
+      enabled: false
+    env: {}
+
+  dns-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 4 * * *"
+    job:
+      enabled: false
+    env:
+      RECORD_TYPES: "A,AAAA,MX,TXT"
+
+  ssh-banner-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 5 * * *"
+    job:
+      enabled: false
+    env:
+      SSH_PORT: "22"
+
+  whois-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 6 * * *"
+    job:
+      enabled: false
+    env: {}
+
+  http-redirect-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 7 * * *"
+    job:
+      enabled: false
+    env:
+      MAX_REDIRECTS: "10"

@@ -1,0 +1,43 @@
+{{- range $name, $scanner := .Values.scanners }}
+{{- if and $scanner.enabled $scanner.schedule }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "detect.scannerName" $name }}
+  namespace: samma-io
+  labels:
+    {{- include "detect.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  schedule: {{ $scanner.schedule | quote }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: {{ $name }}
+              image: {{ $.Values.image.registry }}/samma-io/detect-{{ $name }}:latest
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              env:
+                - name: TARGET
+                  value: {{ $scanner.target | quote }}
+                - name: WRITE_TO_FILE
+                  value: "False"
+                - name: PARSER
+                  value: {{ $name | quote }}
+                - name: SAMMA_IO_SCANNER
+                  value: {{ $name | quote }}
+                - name: NATS_ENABLED
+                  value: {{ $.Values.nats.enabled | quote }}
+                - name: NATS_URL
+                  value: {{ $.Values.nats.url | quote }}
+                - name: NATS_SUBJECT
+                  value: {{ $.Values.nats.subject | quote }}
+                {{- range $key, $val := $scanner.env }}
+                - name: {{ $key }}
+                  value: {{ $val | quote }}
+                {{- end }}
+{{- end }}
+{{- end }}
