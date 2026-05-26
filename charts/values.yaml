@@ -78,3 +78,15 @@ scanners:
       enabled: false
     env:
       MAX_REDIRECTS: "10"
+
+  waf-scanner:
+    enabled: true
+    target: example.com
+    schedule: "0 8 * * *"
+    job:
+      enabled: false
+    env:
+      HTTPS: "True"
+      PORT: "443"
+      TIMEOUT: "5"
+      USER_AGENT: "samma-io-waf-scanner/1.0"

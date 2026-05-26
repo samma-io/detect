@@ -1,0 +1,28 @@
+services:
+  waf-scanner:
+    build:
+      context: ..
+      dockerfile: waf-scanner/Dockerfile
+    image: ghcr.io/samma-io/detect-waf-scanner:latest
+    volumes:
+      - ./out:/out
+    environment:
+      - TARGET=example.com
+      - HTTPS=True
+      - PORT=443
+      - TIMEOUT=5
+      - USER_AGENT=samma-io-waf-scanner/1.0
+      - SAMMA_IO_SCANNER=waf-scanner
+      - SAMMA_IO_ID=1234
+      - SAMMA_IO_TAGS=scanner
+      - SAMMA_IO_JSON={}
+      - WRITE_TO_FILE=true
+      - PARSER=waf-scanner
+      - NATS_ENABLED=False
+      - NATS_URL=nats://localhost:4222
+      - NATS_SUBJECT=samma-io.scan
+  #filebeat:
+  #  image: docker.elastic.co/beats/filebeat:7.15.0
+  #  volumes:
+  #    - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+  #    - ./out:/out

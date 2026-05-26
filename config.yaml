@@ -37,3 +37,9 @@ whois-scanner: {}
 http-redirect-scanner:
   timeout: 5
   max_redirects: 10
+
+waf-scanner:
+  port: 443
+  https: true
+  timeout: 5
+  user_agent: "samma-io-waf-scanner/1.0"

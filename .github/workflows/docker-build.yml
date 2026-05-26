@@ -29,6 +29,7 @@ jobs:
           - ssh-banner-scanner
           - whois-scanner
           - http-redirect-scanner
+          - waf-scanner
 
     steps:
       - name: Checkout
