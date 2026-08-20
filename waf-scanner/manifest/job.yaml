@@ -71,7 +71,7 @@ spec:
     spec:
       containers:
       - name: waf-scanner
-        image: sammascanner/waf-scanner:v0.1
+        image: ghcr.io/samma-io/detect-waf-scanner:sha-66359fc
         env:
           - name: TARGET
             value: samma.io
