@@ -1,8 +1,34 @@
-# detect
+# detect: the Samma detect scanners
 
-A collection of lightweight, containerised network detection tools that produce newline-delimited JSON output and ship results to Elasticsearch via Filebeat. Each tool runs as a short-lived Docker container (or Kubernetes Job / CronJob) and exits cleanly when done.
+Eight small, open-source security scanners. Each one checks one thing about a host, reports one
+record per finding, and exits. They are the light, always-on layer of
+[Samma](https://github.com/samma-io/guide): the Samma operator runs them in your Kubernetes cluster
+against every Ingress you annotate, and the findings end up in Grafana in that same cluster.
 
-Images are published to the GitHub Container Registry at `ghcr.io/samma-io/detect-<tool-name>:latest` on every push to `main`.
+Images are published to `ghcr.io/samma-io/detect-<tool-name>:latest` on every push to `main`.
+
+---
+
+## The scanners and what they are for
+
+| Scanner | What it checks | Use it for |
+|---|---|---|
+| `tls-scanner` | Certificate validity, expiry and days left, issuer, protocol, cipher | Catching expiring or invalid certificates and old TLS versions |
+| `http-headers-scanner` | Security headers: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-XSS-Protection | OWASP secure-headers hygiene on every web endpoint |
+| `http-redirect-scanner` | Full redirect chain, hop by hop | Making sure HTTP goes to HTTPS and nothing redirects somewhere unexpected |
+| `port-scanner` | Open TCP ports (default 80, 443, 8080, 8443) | Spotting services that should not be exposed |
+| `ssh-banner-scanner` | SSH banner and software version | Finding outdated SSH servers |
+| `dns-scanner` | A, AAAA, MX and TXT records | Tracking DNS changes and dangling records |
+| `whois-scanner` | Registrar, creation and expiry dates, name servers | Domain expiry and ownership changes |
+| `traceroute-scanner` | Network path, hop by hop | Seeing how a target is reached, and when that changes |
+
+None of them sends attack-like traffic, so they are safe to run often. For deeper checks, the
+operator also runs the classic scanners: [nmap](https://github.com/samma-io/nmap),
+[nikto](https://github.com/samma-io/nikto) and [tsunami](https://github.com/samma-io/tsunami).
+With a [samma.io](https://samma.io) connection you also get external scanners and validated vendor
+scanners, such as PCI DSS ASV, for tagged Ingresses. The
+[guide](https://github.com/samma-io/guide/blob/main/1a-the-scanners/README.md) covers the whole
+picture.
 
 ---
 
@@ -10,25 +36,14 @@ Images are published to the GitHub Container Registry at `ghcr.io/samma-io/detec
 
 Every tool follows the same pattern:
 
-1. Read configuration from environment variables (or fall back to `config.yaml` defaults)
-2. Run the detection and emit one JSON object per finding via `sammaParser.py`
-3. Write results to `/out/<tool-name>.json` when `WRITE_TO_FILE=true`
-4. Write `/out/die` when finished — this signals the Filebeat sidecar to shut down
+1. Read configuration from environment variables (or fall back to `config.yaml` defaults).
+2. Run the detection and emit one record per finding through `sammaParser.py`. It is printed to
+   stdout and, when `NATS_ENABLED=true`, published to NATS as JSON.
+3. Optionally write the results to `/out/<tool-name>.json` when `WRITE_TO_FILE=true`.
+4. Write `/out/die` when finished, so a sidecar (if any) knows the scan is done.
 
----
-
-## Tools
-
-| Tool | What it detects | Extra deps |
-|---|---|---|
-| `port-scanner` | Open/closed TCP ports | — |
-| `traceroute-scanner` | Network path hop-by-hop | `traceroute` (apt) |
-| `tls-scanner` | TLS certificate details — expiry, issuer, cipher, protocol | — |
-| `http-headers-scanner` | Missing security headers (HSTS, CSP, X-Frame-Options, …) | — |
-| `dns-scanner` | A, AAAA, MX, TXT DNS records | `dnspython` |
-| `ssh-banner-scanner` | SSH banner and software version string | — |
-| `whois-scanner` | Registrar, creation/expiry dates, nameservers | `python-whois` |
-| `http-redirect-scanner` | Full HTTP redirect chain | — |
+Under the Samma operator, findings go **scanner → NATS (`samma-io.scan`) → bridge → TimescaleDB →
+Grafana**. You don't run anything else.
 
 ---
 
@@ -103,6 +118,10 @@ Every tool accepts a common set of variables plus tool-specific ones.
 | `SAMMA_IO_ID` | `1234` | Deployment ID added to every record |
 | `SAMMA_IO_TAGS` | `['scanner']` | Tags added to every record |
 | `SAMMA_IO_JSON` | `{}` | Extra arbitrary JSON added to every record |
+| `TARGET_ID` | — | samma.io target id, so results show on that target in the dashboard |
+| `NATS_ENABLED` | `False` | Set to `true` to publish every finding to NATS |
+| `NATS_URL` | `nats://localhost:4222` | NATS server |
+| `NATS_SUBJECT` | `scans` | Subject to publish on (the operator uses `samma-io.scan`) |
 
 ### port-scanner
 
@@ -335,7 +354,12 @@ Each image is also tagged with the short git SHA (`sha-<7chars>`).
 
 ## Kubernetes
 
-Each tool ships `manifest/job.yaml` (one-off run) and `manifest/cron.yaml` (scheduled run). Both include the tool container and a Filebeat sidecar that ships results to Elasticsearch.
+The normal way to run these in Kubernetes is the
+[Samma operator](https://github.com/samma-io/operator). It creates the Jobs and CronJobs for you,
+from an annotated Ingress, the API or a `Scanner` resource, and wires up NATS. For a few fixed
+targets without the operator, use the Helm chart in `helm/`.
+
+The standalone manifests below are the older way. Each tool ships `manifest/job.yaml` (one-off run) and `manifest/cron.yaml` (scheduled run). Both include the tool container and a Filebeat sidecar that ships results to Elasticsearch.
 
 ```bash
 # Apply ConfigMaps + run a one-off job
