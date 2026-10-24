@@ -10,8 +10,15 @@ NATS_SUBJECT = os.getenv('NATS_SUBJECT', 'samma-io.scan')
 
 
 
+PARSER_ALLOWLIST = ['dns-scanner', 'http-headers-scanner', 'http-redirect-scanner',
+                    'port-scanner', 'ssh-banner-scanner', 'tls-scanner',
+                    'traceroute-scanner', 'waf-scanner', 'whois-scanner']
+
 #if we want to write to file lets set it up
 if WRITE_TO_FILE != "False":
+    if PARSER not in PARSER_ALLOWLIST:
+        print('WARNING: invalid PARSER value {!r}, falling back to {!r}'.format(PARSER, 'ssh-banner-scanner'))
+        PARSER = 'ssh-banner-scanner'
     f = open("/out/{}.json".format(PARSER), "a")
 
 

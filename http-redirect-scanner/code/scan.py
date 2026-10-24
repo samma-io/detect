@@ -1,6 +1,7 @@
 import os
 import urllib.request
 import urllib.error
+import urllib.parse
 import yaml
 import sammaParser
 
@@ -51,6 +52,20 @@ while hop < max_redirects:
     except urllib.error.HTTPError as e:
         if e.code in (301, 302, 303, 307, 308):
             location = e.headers.get('Location', '')
+            scheme = urllib.parse.urlparse(location).scheme.lower()
+            if scheme not in ('', 'http', 'https'):
+                finding = {
+                    'host': target,
+                    'hop': hop,
+                    'url': current_url,
+                    'status_code': e.code,
+                    'redirect_to': location,
+                    'final': True,
+                    'error': 'blocked redirect scheme: {}'.format(scheme),
+                    'type': 'HTTPRedirect'
+                }
+                sammaParser.logger(finding)
+                break
             finding = {
                 'host': target,
                 'hop': hop,

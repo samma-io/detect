@@ -24,7 +24,7 @@ max_hops = int(os.getenv('MAX_HOPS', tr_config.get('max_hops', 30)))
 timeout = int(os.getenv('TIMEOUT', tr_config.get('timeout', 2)))
 
 # Run traceroute
-cmd = ['traceroute', '-n', '-q', '1', '-w', str(timeout), '-m', str(max_hops), target]
+cmd = ['traceroute', '-n', '-q', '1', '-w', str(timeout), '-m', str(max_hops), '--', target]
 result = subprocess.run(cmd, capture_output=True, text=True)
 
 # Parse each hop line: "  1  1.2.3.4  12.345 ms" or "  1  *"
