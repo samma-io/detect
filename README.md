@@ -1,11 +1,12 @@
 # detect: the Samma detect scanners
 
-Eight small, open-source security scanners. Each one checks one thing about a host, reports one
-record per finding, and exits. They are the light, always-on layer of
+Nine small, open-source security scanners. Each one checks one thing about a host, reports one
+message per finding with a stable check id and a severity, says how the run ended, and exits. They are the light, always-on layer of
 [Samma](https://github.com/samma-io/guide): the Samma operator runs them in your Kubernetes cluster
 against every Ingress you annotate, and the findings end up in Grafana in that same cluster.
 
-Images are published to `ghcr.io/samma-io/detect-<tool-name>:latest` on every push to `main`.
+Images are published to `ghcr.io/samma-io/detect-<tool-name>`: tagged `latest` on every push to
+`main`, and tagged with the version on every release (see [Releases](#releases)).
 
 ---
 
@@ -21,6 +22,7 @@ Images are published to `ghcr.io/samma-io/detect-<tool-name>:latest` on every pu
 | `dns-scanner` | A, AAAA, MX and TXT records | Tracking DNS changes and dangling records |
 | `whois-scanner` | Registrar, creation and expiry dates, name servers | Domain expiry and ownership changes |
 | `traceroute-scanner` | Network path, hop by hop | Seeing how a target is reached, and when that changes |
+| `waf-scanner` | WAF or CDN fingerprints and three probe requests | Knowing which edge protection fronts a host, if any |
 
 None of them sends attack-like traffic, so they are safe to run often. For deeper checks, the
 operator also runs the classic scanners: [nmap](https://github.com/samma-io/nmap),
@@ -37,13 +39,17 @@ picture.
 Every tool follows the same pattern:
 
 1. Read configuration from environment variables (or fall back to `config.yaml` defaults).
-2. Run the detection and emit one record per finding through `sammaParser.py`. It is printed to
-   stdout and, when `NATS_ENABLED=true`, published to NATS as JSON.
-3. Optionally write the results to `/out/<tool-name>.json` when `WRITE_TO_FILE=true`.
-4. Write `/out/die` when finished, so a sidecar (if any) knows the scan is done.
+2. Run the detection and emit one **finding** message per failing check (or per inventory fact)
+   through the shared `samma_finding` package in `common/`. Every message is printed to stdout
+   as one JSON line and, when `NATS_ENABLED=true`, published to NATS.
+3. End the run with exactly one **run** message that says whether the scan `succeeded`,
+   `failed` (an exception) or `timed_out` (SIGTERM from a Job deadline).
+4. Optionally append every message to `/out/<tool-name>.json` when `WRITE_TO_FILE=true`, and
+   write `/out/die` when finished, so a sidecar (if any) knows the scan is done.
 
-Under the Samma operator, findings go **scanner → NATS (`samma-io.scan`) → bridge → TimescaleDB →
-Grafana**. You don't run anything else.
+The message shapes are in [Finding schema v2](#finding-schema-v2) below. Under the Samma
+operator, findings go **scanner → NATS (`samma-io.scan`) → bridge → TimescaleDB → Grafana**.
+You don't run anything else.
 
 ---
 
@@ -87,7 +93,8 @@ TARGET=http://example.com docker compose -f http-redirect-scanner/docker-compose
 
 ### Read the output
 
-Each tool writes results to `<tool-name>/out/<tool-name>.json`:
+Each tool writes one JSON message per line to `<tool-name>/out/<tool-name>.json`; the last
+line is the run message:
 
 ```bash
 cat port-scanner/out/port-scanner.json
@@ -107,6 +114,20 @@ ls port-scanner/out/die   # exists when the scan is done
 
 Every tool accepts a common set of variables plus tool-specific ones.
 
+### Settings precedence
+
+Every setting is resolved the same way: the **environment variable** wins, then the tool's section
+in [`config.yaml`](#configuration-file), then the built-in default. A variable that is set but
+empty counts as unset.
+
+For the tools that connect to one port under one scheme (`http-headers-scanner`,
+`http-redirect-scanner`, `waf-scanner`) the port follows the scheme: without `PORT`, `HTTPS=true`
+means 443 and `HTTPS=false` means 80, and a `port` in `config.yaml` applies only together with the
+`https` written next to it. So `HTTPS=True` on its own talks TLS to port 443; it never reuses the
+`port: 80` that `config.yaml` lists for plain HTTP (up to and including 2.0.1 it did, and recorded
+a TLS handshake with port 80 as the response). `tls-scanner` is always TLS: `PORT`, then
+`config.yaml`, then 443.
+
 ### Common variables (all tools)
 
 | Variable | Default | Description |
@@ -121,7 +142,10 @@ Every tool accepts a common set of variables plus tool-specific ones.
 | `TARGET_ID` | — | samma.io target id, so results show on that target in the dashboard |
 | `NATS_ENABLED` | `False` | Set to `true` to publish every finding to NATS |
 | `NATS_URL` | `nats://localhost:4222` | NATS server |
-| `NATS_SUBJECT` | `scans` | Subject to publish on (the operator uses `samma-io.scan`) |
+| `NATS_SUBJECT` | `samma-io.scan` | Subject to publish on |
+| `SAMMA_RUN_ID` | the hostname (the Job's pod name) | `runId` on every message of this run |
+| `SAMMA_SCANNER_VERSION` | the `VERSION` file | `scannerVersion` on every message |
+| `OUT_DIR` | `/out` | Where the file output and the `die` marker go |
 
 ### port-scanner
 
@@ -163,11 +187,11 @@ TARGET=example.com VERIFY_CERT=False docker compose -f tls-scanner/docker-compos
 | Variable | Default | Description |
 |---|---|---|
 | `HTTPS` | `False` | Use HTTPS instead of HTTP |
-| `PORT` | `80` | Port to connect to |
+| `PORT` | `80`, or `443` with `HTTPS=True` | Port to connect to (see [Settings precedence](#settings-precedence)) |
 | `TIMEOUT` | `5` | Connection timeout (seconds) |
 
 ```bash
-TARGET=example.com HTTPS=True PORT=443 docker compose -f http-headers-scanner/docker-compose.yaml up
+TARGET=example.com HTTPS=True docker compose -f http-headers-scanner/docker-compose.yaml up
 ```
 
 Checked headers: `Strict-Transport-Security`, `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-XSS-Protection`.
@@ -207,6 +231,8 @@ TARGET=example.com docker compose -f whois-scanner/docker-compose.yaml up
 
 | Variable | Default | Description |
 |---|---|---|
+| `HTTPS` | `False` | Start the chain over HTTPS instead of plain HTTP (a `TARGET` given as a URL keeps its own scheme) |
+| `PORT` | `80`, or `443` with `HTTPS=True` | Port of the first request |
 | `TIMEOUT` | `5` | Per-request timeout (seconds) |
 | `MAX_REDIRECTS` | `10` | Maximum hops to follow |
 
@@ -214,91 +240,198 @@ TARGET=example.com docker compose -f whois-scanner/docker-compose.yaml up
 TARGET=http://example.com MAX_REDIRECTS=5 docker compose -f http-redirect-scanner/docker-compose.yaml up
 ```
 
+### waf-scanner
+
+| Variable | Default | Description |
+|---|---|---|
+| `HTTPS` | `True` | Use HTTPS (the default) or plain HTTP |
+| `PORT` | `443`, or `80` with `HTTPS=False` | Port to connect to |
+| `TIMEOUT` | `5` | Per-request timeout (seconds) |
+| `USER_AGENT` | `samma-io-waf-scanner/1.0` | User-Agent of the baseline and probe requests |
+
+```bash
+TARGET=example.com docker compose -f waf-scanner/docker-compose.yaml up
+```
+
 ---
 
-## Output format
+## Finding schema v2
 
-Every JSON record includes a `samma-io` metadata block alongside the tool-specific fields:
+Every message a scanner emits, on NATS and in the file output, is one JSON document with the
+same envelope:
+
+| Field | Meaning |
+|---|---|
+| `schema` | Always `samma.io/scan/v2` |
+| `kind` | `finding` or `run` |
+| `scanner` | The tool name, for example `tls-scanner` |
+| `scannerVersion` | `SAMMA_SCANNER_VERSION`, else the `VERSION` file baked into the image |
+| `target` | The `TARGET` the scanner was given, verbatim |
+| `runId` | `SAMMA_RUN_ID`, else the hostname, which under Kubernetes is the Job's pod name |
+| `emittedAt` | RFC 3339 UTC time the message was built |
+| `samma-io` | The legacy block `{scanner, id, tags, json}`, unchanged from v1 |
+
+### A finding
+
+One finding is one failing check on one endpoint, or one INFO inventory fact (an open port, an
+observed certificate). It adds:
+
+| Field | Meaning |
+|---|---|
+| `checkId` | Stable id, namespaced per scanner, for example `SAMMA-TLS-PROTOCOL-DEPRECATED`. Never renamed: a renamed check is a new check |
+| `severity` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` or `INFO` |
+| `title` | One line, the same for every endpoint where the check fails |
+| `endpoint` | `{host, port, scheme}`; `host` is the name the scanner was given, `port` may be `null` |
+| `evidence` | What was seen, at most 1 KiB, never a response body |
+| `remediation` | What to change |
+| `references` | Links, may be empty |
+| `cveIds` | CVE ids when a scanner identifies one; empty today |
+| `compliance` | Reserved for framework mappings; empty today |
+| `raw` | The scanner's own record, the fields the v1 output had (`host`, `port`, `type`, ...) plus the resolved address where that matters |
+
+`host`, `port`, `status` and `type` from `raw` are also mirrored at the top level, because the
+current bridge reads them there. New consumers should read `raw`.
 
 ```json
 {
-  "host": "example.com",
+  "schema": "samma.io/scan/v2",
+  "kind": "finding",
+  "scanner": "tls-scanner",
+  "scannerVersion": "2.0.0",
+  "target": "api.example.com",
+  "runId": "tls-scanner-api-example-com-28934712-k9z2p",
+  "emittedAt": "2026-10-24T02:00:21Z",
+  "checkId": "SAMMA-TLS-PROTOCOL-DEPRECATED",
+  "severity": "HIGH",
+  "title": "Deprecated TLS protocol version negotiated",
+  "endpoint": {"host": "api.example.com", "port": 443, "scheme": "https"},
+  "evidence": "negotiated TLSv1",
+  "remediation": "Disable SSLv3, TLS 1.0 and TLS 1.1 in the ingress controller or server TLS options and allow TLS 1.2 and 1.3 only.",
+  "references": ["https://datatracker.ietf.org/doc/html/rfc8996"],
+  "cveIds": [],
+  "compliance": [],
+  "raw": {"host": "api.example.com", "port": 443, "protocol": "TLSv1", "cipher": "AES128-SHA", "valid": true, "type": "TLSScan", "address": {"address": "192.0.2.10", "family": "ipv4"}},
+  "host": "api.example.com",
   "port": 443,
-  "status": "open",
-  "type": "PortScan",
-  "samma-io": {
-    "scanner": "port-scanner",
-    "id": "1234",
-    "tags": "['scanner']",
-    "json": "{}"
-  }
+  "type": "TLSScan",
+  "samma-io": {"scanner": "tls-scanner", "id": "1234", "tags": ["scanner"], "json": "{}"}
 }
 ```
 
-### Output shapes per tool
+### The run message
 
-**port-scanner**
-```json
-{"host": "example.com", "port": 443, "status": "open", "type": "PortScan"}
-```
+Sent exactly once, last, whatever happened. It adds:
 
-**traceroute-scanner**
-```json
-{"host": "example.com", "hop": 3, "ip": "1.2.3.4", "rtt_ms": 12.4, "type": "Traceroute"}
-{"host": "example.com", "hop": 5, "ip": null, "rtt_ms": null, "type": "Traceroute"}
-```
+| Field | Meaning |
+|---|---|
+| `outcome` | `succeeded`, `failed` or `timed_out` |
+| `message` | Empty on success; on failure the exception class and its short message, never a stack trace; on timeout `SIGTERM received` |
+| `startedAt`, `finishedAt` | RFC 3339 UTC |
+| `findingCount` | Findings emitted in this run, including the ones before a crash |
+| `scan` | Always `"done"`, the v1 end marker |
 
-**tls-scanner**
 ```json
 {
-  "host": "example.com", "port": 443,
-  "valid": true, "expired": false, "days_remaining": 42,
-  "expires": "2026-05-01", "subject_cn": "example.com",
-  "issuer": "Let's Encrypt", "protocol": "TLSv1.3",
-  "cipher": "TLS_AES_256_GCM_SHA384", "type": "TLSScan"
+  "schema": "samma.io/scan/v2",
+  "kind": "run",
+  "scanner": "tls-scanner",
+  "scannerVersion": "2.0.0",
+  "target": "api.example.com",
+  "runId": "tls-scanner-api-example-com-28934712-k9z2p",
+  "emittedAt": "2026-10-24T02:00:21Z",
+  "outcome": "succeeded",
+  "message": "",
+  "startedAt": "2026-10-24T02:00:04Z",
+  "finishedAt": "2026-10-24T02:00:21Z",
+  "findingCount": 2,
+  "scan": "done",
+  "samma-io": {"scanner": "tls-scanner", "id": "1234", "tags": ["scanner"], "json": "{}"}
 }
 ```
 
-**http-headers-scanner**
-```json
-{"host": "example.com", "port": 80, "https": false, "status_code": 200, "header": "strict-transport-security", "present": true, "value": "max-age=31536000", "type": "HTTPHeaders"}
-{"host": "example.com", "port": 80, "https": false, "status_code": 200, "header": "content-security-policy", "present": false, "value": null, "type": "HTTPHeaders"}
-```
+A consumer that keeps the last good result per target should replace it only when `outcome` is
+`succeeded`; a `failed` or `timed_out` run means "we do not know", not "nothing was found". The
+process exit code follows the outcome: 0, 1, or 143 for a timeout, and 2 when `TARGET` is unset.
 
-**dns-scanner**
-```json
-{"host": "example.com", "record_type": "A", "value": "93.184.216.34", "type": "DNSScan"}
-{"host": "example.com", "record_type": "MX", "value": "0 .", "type": "DNSScan"}
-```
+What counts as a failed run is deliberate per scanner. A name that does not resolve fails every
+scanner. `tls-scanner`, `http-headers-scanner`, `http-redirect-scanner` and `waf-scanner` fail
+when the endpoint cannot be reached at all, because their one job is to judge that endpoint.
+`port-scanner` and `ssh-banner-scanner` treat a refused or filtered port as an empty success,
+because "nothing listens" is the answer they exist to give.
 
-**ssh-banner-scanner**
-```json
-{"host": "scanme.nmap.org", "port": 22, "banner": "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13", "software": "OpenSSH_6.6.1p1", "type": "SSHBanner"}
-```
+### The check catalogue
 
-**whois-scanner**
-```json
-{
-  "host": "example.com",
-  "registrar": "RESERVED-Internet Assigned Numbers Authority",
-  "creation_date": "1995-08-14 04:00:00",
-  "expiration_date": "2025-08-13 04:00:00",
-  "name_servers": ["a.iana-servers.net", "b.iana-servers.net"],
-  "type": "WHOISScan"
-}
-```
+`common/samma_finding/catalog/<scanner>.py` lists every check a scanner can emit with its
+severity, title, remediation and references. It is the source of truth: a scanner cannot emit a
+check id that is not in its catalogue (`samma_finding` refuses it), and `tests/test_catalog.py`
+checks both directions, so a new detection means a catalogue entry in the same change. Severities
+are fixed per check id; when the same observation deserves different severities it is two checks
+(`SAMMA-TLS-CERT-EXPIRING` and `SAMMA-TLS-CERT-EXPIRED`). Print the catalogue as JSON with
+`python3 -m samma_finding.catalog` from `common/`.
 
-**http-redirect-scanner**
-```json
-{"host": "http://example.com", "hop": 0, "url": "http://example.com", "status_code": 301, "redirect_to": "https://example.com/", "final": false, "type": "HTTPRedirect"}
-{"host": "http://example.com", "hop": 1, "url": "https://example.com/", "status_code": 200, "redirect_to": null, "final": true, "type": "HTTPRedirect"}
-```
+| Scanner | Check id | Severity | Title |
+|---|---|---|---|
+| `dns-scanner` | `SAMMA-DNS-RECORDS` | INFO | DNS records observed |
+| `dns-scanner` | `SAMMA-DNS-NXDOMAIN` | LOW | DNS name does not exist |
+| `http-headers-scanner` | `SAMMA-HEADERS-HSTS-MISSING` | MEDIUM | Strict-Transport-Security header is missing |
+| `http-headers-scanner` | `SAMMA-HEADERS-CSP-MISSING` | LOW | Content-Security-Policy header is missing |
+| `http-headers-scanner` | `SAMMA-HEADERS-X-CONTENT-TYPE-OPTIONS-MISSING` | LOW | X-Content-Type-Options header is missing |
+| `http-headers-scanner` | `SAMMA-HEADERS-X-FRAME-OPTIONS-MISSING` | LOW | X-Frame-Options header is missing |
+| `http-headers-scanner` | `SAMMA-HEADERS-REFERRER-POLICY-MISSING` | LOW | Referrer-Policy header is missing |
+| `http-headers-scanner` | `SAMMA-HEADERS-PERMISSIONS-POLICY-MISSING` | INFO | Permissions-Policy header is missing |
+| `http-headers-scanner` | `SAMMA-HEADERS-X-XSS-PROTECTION-ENABLED` | INFO | Deprecated X-XSS-Protection header is enabled |
+| `http-headers-scanner` | `SAMMA-HEADERS-OBSERVED` | INFO | HTTP security headers observed |
+| `http-redirect-scanner` | `SAMMA-REDIRECT-HTTPS-MISSING` | MEDIUM | HTTP is not redirected to HTTPS |
+| `http-redirect-scanner` | `SAMMA-REDIRECT-DOWNGRADE` | MEDIUM | Redirect chain downgrades HTTPS to HTTP |
+| `http-redirect-scanner` | `SAMMA-REDIRECT-OFFSITE` | INFO | Redirect leaves the target host |
+| `http-redirect-scanner` | `SAMMA-REDIRECT-TOO-MANY` | LOW | Redirect chain exceeded the hop limit |
+| `http-redirect-scanner` | `SAMMA-REDIRECT-BROKEN` | LOW | Redirect target could not be reached |
+| `http-redirect-scanner` | `SAMMA-REDIRECT-CHAIN` | INFO | HTTP redirect chain observed |
+| `port-scanner` | `SAMMA-PORT-OPEN-ADMIN` | HIGH | Administrative or database port is reachable from the internet |
+| `port-scanner` | `SAMMA-PORT-OPEN` | INFO | TCP port is open |
+| `ssh-banner-scanner` | `SAMMA-SSH-PROTOCOL-V1` | HIGH | SSH protocol version 1 is offered |
+| `ssh-banner-scanner` | `SAMMA-SSH-VERSION-OUTDATED` | MEDIUM | Outdated OpenSSH version in banner |
+| `ssh-banner-scanner` | `SAMMA-SSH-BANNER` | INFO | SSH service banner observed |
+| `tls-scanner` | `SAMMA-TLS-PROTOCOL-DEPRECATED` | HIGH | Deprecated TLS protocol version negotiated |
+| `tls-scanner` | `SAMMA-TLS-CIPHER-WEAK` | MEDIUM | Weak cipher suite negotiated |
+| `tls-scanner` | `SAMMA-TLS-CERT-EXPIRED` | HIGH | TLS certificate has expired |
+| `tls-scanner` | `SAMMA-TLS-CERT-EXPIRING` | MEDIUM | TLS certificate expires within 14 days |
+| `tls-scanner` | `SAMMA-TLS-CERT-INVALID` | HIGH | TLS certificate failed verification |
+| `tls-scanner` | `SAMMA-TLS-CERTIFICATE` | INFO | TLS certificate observed |
+| `traceroute-scanner` | `SAMMA-TRACEROUTE-PATH` | INFO | Network path observed |
+| `waf-scanner` | `SAMMA-WAF-DETECTED` | INFO | Web application firewall or CDN detected |
+| `waf-scanner` | `SAMMA-WAF-NOT-DETECTED` | LOW | No web application firewall detected |
+| `whois-scanner` | `SAMMA-WHOIS-RECORD` | INFO | WHOIS record observed |
+| `whois-scanner` | `SAMMA-WHOIS-DOMAIN-EXPIRING` | MEDIUM | Domain registration expires within 30 days |
+| `whois-scanner` | `SAMMA-WHOIS-DOMAIN-EXPIRED` | HIGH | Domain registration has expired |
+
+Closed ports, present headers and record types with no answer are not findings; they appear in
+the evidence or `raw` of the INFO inventory finding instead.
+
+### IPv4, IPv6 and dual-stack targets
+
+`port-scanner` and `tls-scanner` resolve the target with `getaddrinfo` for both address
+families and try every address. A port that accepts on any address is one finding, with the
+per-address result under `raw.addresses`. The other scanners use the standard library's HTTP and
+socket helpers, which already walk both families. `endpoint.host` is always the name the scanner
+was given; the address used is under `raw`.
+
+### Backwards compatibility
+
+The `samma-io` block is unchanged. The v1 record of each scanner is carried in `raw`, and its
+`host`, `port`, `status` and `type` are mirrored at the top level, so the current bridge's columns
+keep filling. The `{"scan": "done"}` end marker is now the run message, which carries
+`"scan": "done"` too. Stdout changed from Python `repr` to JSON lines. `sammaParser.py` still
+exists in every tool directory as a shim over `samma_finding.legacy` for out-of-tree scanners
+built on the old pattern.
 
 ---
 
 ## Configuration file
 
-`config.yaml` at the repo root holds default values for all tools. Environment variables always take precedence.
+`config.yaml` at the repo root holds default values for all tools. Environment variables always
+take precedence, and a `port` applies only together with the `https` next to it (see
+[Settings precedence](#settings-precedence)).
 
 ```yaml
 defaults:
@@ -327,8 +460,26 @@ ssh-banner-scanner:
   timeout: 5
 
 http-redirect-scanner:
+  https: false
   timeout: 5
   max_redirects: 10
+
+waf-scanner:
+  port: 443
+  https: true
+  timeout: 5
+  user_agent: "samma-io-waf-scanner/1.0"
+```
+
+---
+
+## Tests
+
+The shared package and every scanner's classification have standard-library unit tests, no
+network and no third-party modules needed:
+
+```bash
+python3 -m unittest discover -s tests -t .
 ```
 
 ---
@@ -346,13 +497,61 @@ ghcr.io/samma-io/detect-dns-scanner:latest
 ghcr.io/samma-io/detect-ssh-banner-scanner:latest
 ghcr.io/samma-io/detect-whois-scanner:latest
 ghcr.io/samma-io/detect-http-redirect-scanner:latest
+ghcr.io/samma-io/detect-waf-scanner:latest
 ```
 
-Each image is also tagged with the short git SHA (`sha-<7chars>`).
+Each image is also tagged with the short git SHA (`sha-<7chars>`). A manual run of the workflow
+from another branch pushes the SHA tag only, so `latest` always means `main`.
+
+## Base image
+
+Every image is built `FROM python:3.13-slim-bookworm`, pinned by the digest of the multi-arch index,
+so a build today and a build next month start from the same bytes, and a rebuild of the
+`3.13-slim-bookworm` tag upstream changes nothing here until someone bumps the pin. Each
+Dockerfile installs only what its scanner needs: the packages in `code/requirements.txt` (PyYAML
+and nats-py everywhere, dnspython for dns-scanner, python-whois for whois-scanner) and, for
+traceroute-scanner alone, the Debian `traceroute` package. The code is owned by root and read-only
+to the `samma` user; `/out` and `/home/samma` are the writable paths. The build context is the
+repository root and `.dockerignore` keeps tests, charts and local output out of it.
+
+To bump the base, change all nine Dockerfiles at once (they are the same file apart from the
+scanner name):
+
+```bash
+docker buildx imagetools inspect python:3.13-slim-bookworm
+```
+
+Copy the top-level `Digest:` (the index digest, not one of the per-platform manifests) into every
+`FROM` line and update the date in the comment above it. The next release is built on the new
+base and its release notes carry the new per-image digests.
+
+---
+
+## Releases
+
+A release is a git tag `v<version>` where `<version>` is the content of the `VERSION` file, the
+`scannerVersion` every message carries. Pushing the tag (or creating a GitHub release for it) runs
+`.github/workflows/release.yaml`, which
+
+1. checks that the tag matches `VERSION` and runs the unit tests;
+2. builds all nine images for `linux/amd64` and `linux/arm64` and pushes them to
+   `ghcr.io/samma-io/detect-<tool-name>` tagged `<version>` and `<version>-<short sha>`. A release
+   never moves `latest`;
+3. creates the GitHub release with a table of every image's digest and a
+   `detect-<version>-images.txt` file listing them as `image@digest`, for mirrors and for pinning.
+
+To release: change `VERSION`, merge, then `git tag v<version> && git push origin v<version>`.
+The [Samma operator](https://github.com/samma-io/operator) chart pins the detect images with its
+`scanners.detectTag` value, so a new detect release becomes a one-line change there.
 
 ---
 
 ## Kubernetes
+
+Every image runs as the `samma` user, created with uid 1000 and gid 1000 explicitly
+(`USER 1000:1000` in the Dockerfile) because that is the `runAsUser` the Samma operator sets: a
+pod running as 1000 owns `/out` and can write it. The numeric `USER` also lets Kubernetes verify
+`runAsNonRoot: true` without a `runAsUser`.
 
 The normal way to run these in Kubernetes is the
 [Samma operator](https://github.com/samma-io/operator). It creates the Jobs and CronJobs for you,
@@ -384,8 +583,13 @@ To point tools at a different Elasticsearch cluster, set `ELASTICSEARCH_HOSTS` i
 
 ```
 detect/
+├── VERSION                     # scannerVersion on every message
 ├── config.yaml
-├── .github/workflows/docker-build.yml
+├── .dockerignore               # the build context is the repo root
+├── .github/workflows/          # docker-build.yml (main: latest and sha tags), release.yaml (tags v*)
+├── common/samma_finding/       # shared: schema v2, run outcome, publishers, check catalogues
+│   └── catalog/<scanner>.py
+├── tests/                      # python3 -m unittest discover -s tests -t .
 ├── port-scanner/
 ├── traceroute-scanner/
 ├── tls-scanner/
@@ -393,14 +597,15 @@ detect/
 ├── dns-scanner/
 ├── ssh-banner-scanner/
 ├── whois-scanner/
-└── http-redirect-scanner/
+├── http-redirect-scanner/
+└── waf-scanner/
 
 Each tool directory:
 ├── code/
-│   ├── scan.py
-│   ├── sammaParser.py
+│   ├── scan.py                 # detection and classification; imports samma_finding
+│   ├── sammaParser.py          # compatibility shim over samma_finding.legacy
 │   └── requirements.txt
-├── Dockerfile
+├── Dockerfile                  # copies code/, common/samma_finding and VERSION; runs as samma, uid 1000
 ├── docker-compose.yaml
 ├── filebeat/
 │   └── filebeat.yml
