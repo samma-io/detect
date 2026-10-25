@@ -4,6 +4,7 @@ import ssl
 import datetime
 import yaml
 import sammaParser
+import protocols
 
 # Load base config
 config_path = os.path.join(os.path.dirname(__file__), '../../config.yaml')
@@ -86,4 +87,21 @@ except Exception as e:
     finding['error'] = str(e)
 
 sammaParser.logger(finding)
+
+# Per-protocol enumeration.
+#
+# The handshake above reports the NEGOTIATED protocol, which is the highest
+# both sides support -- so it cannot distinguish a TLS 1.3-only host from one
+# that also still accepts TLS 1.0. Emit one TLSProtocolScan finding per
+# version so deprecated protocols still being offered are visible.
+#
+# Off by default is deliberate: this is 4 extra handshakes per target. Set
+# ENUMERATE_PROTOCOLS=true to enable.
+enumerate_env = os.getenv(
+    'ENUMERATE_PROTOCOLS', str(tls_config.get('enumerate_protocols', False))
+)
+if enumerate_env.lower() in ('true', '1', 'yes'):
+    for protocol_finding in protocols.enumerate_protocols(target, port, timeout):
+        sammaParser.logger(protocol_finding)
+
 sammaParser.endThis()
