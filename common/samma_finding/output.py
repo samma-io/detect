@@ -5,9 +5,12 @@ package stays importable (and testable) where ``nats-py`` is not installed.
 """
 
 import os
+import re
 import sys
 
 from . import schema
+
+_PARSER_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 class StdoutPublisher:
@@ -120,6 +123,10 @@ class Emitter:
         if env.get("WRITE_TO_FILE", "False") != "False":
             out_dir = env.get("OUT_DIR", "/out")
             parser = env.get("PARSER", scanner)
+            if not _PARSER_RE.match(parser):
+                # PARSER names the file under OUT_DIR; anything but a plain
+                # scanner name could point it elsewhere (detect#10).
+                parser = scanner
             publishers.append(FilePublisher(os.path.join(out_dir, "%s.json" % parser)))
         if env.get("NATS_ENABLED", "False") != "False":
             publishers.append(NatsPublisher(

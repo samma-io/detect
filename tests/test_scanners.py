@@ -289,6 +289,17 @@ class HttpRedirectScannerTest(unittest.TestCase):
             "https://www.example.com/": 200})
         self.assertNotIn("SAMMA-REDIRECT-OFFSITE", ids(findings))
 
+    def test_non_http_location_is_not_followed(self):
+        """detect#10: a redirect to file:// must never reach the opener."""
+        opener = FakeOpener({"http://example.com": (302, "file:///etc/passwd")})
+        _c, findings, _b = execute("http-redirect-scanner",
+                                   lambda run: self.mod.scan(run, self.opts, opener=opener),
+                                   target="example.com")
+        hops = findings[-1]["raw"]["hops"]
+        self.assertEqual(len(hops), 1)
+        self.assertEqual(hops[0]["error"], "blocked redirect scheme: file")
+        self.assertEqual(findings[-1]["raw"]["stop"], "blocked")
+
     def test_loop_is_too_many(self):
         _c, findings, _b = self.run_chain("a.example", {
             "http://a.example": (302, "http://a.example/b"),
@@ -456,7 +467,7 @@ class TracerouteScannerTest(unittest.TestCase):
             return Result()
         opts = {"max_hops": 15, "timeout": 2}
         _c, findings, _b = execute("traceroute-scanner", lambda run: self.mod.scan(run, opts, runner=runner))
-        self.assertEqual(calls[0], ["traceroute", "-n", "-q", "1", "-w", "2", "-m", "15", "example.com"])
+        self.assertEqual(calls[0], ["traceroute", "-n", "-q", "1", "-w", "2", "-m", "15", "--", "example.com"])
         self.assertEqual(ids(findings), ["SAMMA-TRACEROUTE-PATH"])
         self.assertTrue(findings[0]["raw"]["reached"])
         self.assertIn("2 *", findings[0]["evidence"])

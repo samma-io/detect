@@ -86,6 +86,13 @@ def follow(start_url, opts, opener=None):
         except urllib.error.HTTPError as exc:
             if exc.code in REDIRECT_CODES:
                 location = urllib.parse.urljoin(current, exc.headers.get("Location", ""))
+                scheme = urllib.parse.urlsplit(location).scheme.lower()
+                if scheme not in ("http", "https"):
+                    # Never hand file://, ftp:// and the like to the opener (detect#10).
+                    hops.append({"hop": hop, "url": current, "status_code": exc.code,
+                                 "redirect_to": location, "final": True,
+                                 "error": "blocked redirect scheme: %s" % (scheme or "none")})
+                    return hops, "blocked", None
                 hops.append({"hop": hop, "url": current, "status_code": exc.code,
                              "redirect_to": location, "final": False})
                 current = location

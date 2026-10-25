@@ -140,6 +140,16 @@ class EmitterTest(unittest.TestCase):
         emitter = Emitter.from_env("port-scanner", environ={})
         self.assertEqual([type(p) for p in emitter.publishers], [StdoutPublisher])
 
+    def test_parser_cannot_steer_the_output_path(self):
+        """detect#10: PARSER is a file name under OUT_DIR, never a path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"WRITE_TO_FILE": "True", "OUT_DIR": tmp, "PARSER": "../../etc/x"}
+            emitter = Emitter.from_env("port-scanner", environ=env)
+            files = [p for p in emitter.publishers if isinstance(p, FilePublisher)]
+            self.assertEqual(len(files), 1)
+            self.assertEqual(os.path.dirname(files[0].path), tmp)
+            self.assertTrue(files[0].path.endswith("port-scanner.json"))
+
     def test_from_env_file_and_nats(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {"WRITE_TO_FILE": "true", "OUT_DIR": tmp, "PARSER": "custom",

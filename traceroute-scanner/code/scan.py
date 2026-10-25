@@ -30,7 +30,7 @@ def settings(environ=None, cfg=None):
 
 def command(target, opts):
     return ["traceroute", "-n", "-q", "1", "-w", str(opts["timeout"]),
-            "-m", str(opts["max_hops"]), target]
+            "-m", str(opts["max_hops"]), "--", target]
 
 
 def parse(stdout):
