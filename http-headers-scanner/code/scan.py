@@ -5,11 +5,10 @@ keeps the inventory of what was present. HSTS is only judged over HTTPS,
 where browsers honour it.
 """
 
-import http.client
 import os
 
 import samma_finding
-from samma_finding import config
+from samma_finding import config, netutil
 
 SCANNER = "http-headers-scanner"
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "config.yaml")
@@ -52,9 +51,9 @@ def settings(environ=None, cfg=None):
 def fetch(target, opts):
     """``(status_code, {header: value})`` for ``HEAD /``; errors propagate."""
     if opts["https"]:
-        conn = http.client.HTTPSConnection(target, opts["port"], timeout=opts["timeout"])
+        conn = netutil.HTTPSConnection(target, opts["port"], timeout=opts["timeout"])
     else:
-        conn = http.client.HTTPConnection(target, opts["port"], timeout=opts["timeout"])
+        conn = netutil.HTTPConnection(target, opts["port"], timeout=opts["timeout"])
     try:
         conn.request("HEAD", "/")
         resp = conn.getresponse()

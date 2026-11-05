@@ -44,9 +44,12 @@ The workflow authenticates to GHCR using the automatic `GITHUB_TOKEN`; no secret
 
 Each tool is a self-contained Docker image that:
 1. Reads config from env vars, falling back to `config.yaml` for defaults
-2. Performs the detection and calls `run.finding(check_id, endpoint, evidence=..., raw=...)` for each
+2. Waits (with NATS on) until a TCP connection to `NATS_URL` succeeds, at most
+   `SAMMA_EGRESS_WAIT_SECONDS` (10): `netutil.await_egress`, called by `Run.execute`, because a NetworkPolicy
+   controller such as k3s's kube-router rejects a new pod's traffic for about a second
+3. Performs the detection and calls `run.finding(check_id, endpoint, evidence=..., raw=...)` for each
    failing check or inventory fact
-3. Returns from `scan(run)`; `samma_finding.main` then emits exactly one run message with the outcome
+4. Returns from `scan(run)`; `samma_finding.main` then emits exactly one run message with the outcome
    (`succeeded`, `failed` on an exception, `timed_out` on SIGTERM) and writes `/out/die`
 
 The `/out/die` file is the shutdown signal — the Filebeat sidecar's liveness probe watches for it and kills the pod.
@@ -56,7 +59,9 @@ The `/out/die` file is the shutdown signal — the Filebeat sidecar's liveness p
 - **`common/samma_finding/`** — the one output path for every tool: message schema v2 (`schema.py`),
   the run wrapper and SIGTERM handling (`run.py`), stdout/file/NATS publishers (`output.py`, the NATS
   client is imported lazily), the `config.yaml` loader (`config.py`), dual-stack resolution helpers
-  (`netutil.py`) and the check catalogues (`catalog/<scanner>.py`). Every Dockerfile copies it to
+  (`netutil.py`: `connect_any` keeps the error of a routable address, so IPv6 "Network is unreachable"
+  never hides the IPv4 answer, and names every address in it; `HTTPConnection`/`HTTPSConnection` and
+  the urllib handlers connect through it) and the check catalogues (`catalog/<scanner>.py`). Every Dockerfile copies it to
   `/code/samma_finding`, next to `scan.py`, and copies `VERSION` to `/VERSION`.
 - **`<tool>/code/scan.py`** — detection and classification only. It defines `settings()`, pure
   `classify(...)` helpers and `scan(run)`, and ends with `samma_finding.main(SCANNER, scan)` under

@@ -146,6 +146,7 @@ a TLS handshake with port 80 as the response). `tls-scanner` is always TLS: `POR
 | `SAMMA_RUN_ID` | the hostname (the Job's pod name) | `runId` on every message of this run |
 | `SAMMA_SCANNER_VERSION` | the `VERSION` file | `scannerVersion` on every message |
 | `OUT_DIR` | `/out` | Where the file output and the `die` marker go |
+| `SAMMA_EGRESS_WAIT_SECONDS` | `10` | With NATS on, how long the scan waits at start for a TCP connection to `NATS_URL` to succeed (see below); `0` turns the wait off |
 
 ### port-scanner
 
@@ -412,9 +413,24 @@ the evidence or `raw` of the INFO inventory finding instead.
 
 `port-scanner` and `tls-scanner` resolve the target with `getaddrinfo` for both address
 families and try every address. A port that accepts on any address is one finding, with the
-per-address result under `raw.addresses`. The other scanners use the standard library's HTTP and
-socket helpers, which already walk both families. `endpoint.host` is always the name the scanner
-was given; the address used is under `raw`.
+per-address result under `raw.addresses`. `ssh-banner-scanner` and the HTTP scanners connect
+through the same helper (`netutil.connect_any`), trying each address in turn. `endpoint.host` is
+always the name the scanner was given; the address used is under `raw`.
+
+When no address accepts, the error kept is the one from an address the pod can route to. A pod
+without an IPv6 route gets "Network is unreachable" for every AAAA address, which says nothing
+about the host, so it never hides the IPv4 answer: a dual-stack host whose IPv4 address refuses
+port 22 is "no SSH exposed" (a run with no findings), not a failed run. A failed run's message
+names every address tried and what it answered.
+
+### Waiting for the network at start
+
+Some NetworkPolicy controllers (k3s's kube-router) program a new pod asynchronously and reject
+its traffic for about a second. A scanner that connected right away would record a refused or
+unreachable target, or a closed port, that is not there. With NATS on, every scan therefore first
+retries a TCP connection to the NATS server in `NATS_URL` (the one destination the scanner's
+policy always allows) until it succeeds, for at most `SAMMA_EGRESS_WAIT_SECONDS`, and then scans.
+When NATS does not answer in time the scan goes ahead and publishing reports the failure.
 
 ### Backwards compatibility
 

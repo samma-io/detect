@@ -6,12 +6,11 @@ way; evidence names the indicators, header and cookie values stay under
 ``raw`` and no response body is ever recorded.
 """
 
-import http.client
 import os
 import urllib.parse
 
 import samma_finding
-from samma_finding import config
+from samma_finding import config, netutil
 from samma_finding.run import describe_exception
 
 SCANNER = "waf-scanner"
@@ -109,9 +108,9 @@ def settings(environ=None, cfg=None):
 def fetch(target, opts, path):
     """``(status, [(header, value)], body_text)``; the body never leaves this module."""
     if opts["https"]:
-        conn = http.client.HTTPSConnection(target, opts["port"], timeout=opts["timeout"])
+        conn = netutil.HTTPSConnection(target, opts["port"], timeout=opts["timeout"])
     else:
-        conn = http.client.HTTPConnection(target, opts["port"], timeout=opts["timeout"])
+        conn = netutil.HTTPConnection(target, opts["port"], timeout=opts["timeout"])
     try:
         conn.request('GET', path, headers={'User-Agent': opts["user_agent"], 'Accept': '*/*'})
         resp = conn.getresponse()

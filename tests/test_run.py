@@ -112,6 +112,31 @@ class OutcomeTest(unittest.TestCase):
         self.assertTrue(sink.closed, "publishers are closed even when the last publish fails")
 
 
+class EgressGateTest(unittest.TestCase):
+    def test_gate_runs_once_before_the_scan(self):
+        order = []
+        run, sink = make_run("port-scanner")
+        run._egress_gate = lambda: order.append("gate") or "ready"
+        code = run.execute(lambda r: order.append("scan"))
+        self.assertEqual((code, order, run.egress), (runmod.EXIT_SUCCEEDED, ["gate", "scan"], "ready"))
+
+    def test_default_gate_is_await_egress(self):
+        run, _sink = make_run("port-scanner")
+        run._egress_gate = None
+        with mock.patch.object(runmod.netutil, "await_egress", return_value=None) as gate:
+            run.execute(lambda r: None)
+        gate.assert_called_once_with()
+
+    def test_sigterm_while_waiting_is_a_timed_out_run(self):
+        def gate():
+            raise runmod.ScanTimedOut("SIGTERM received")
+        run, sink = make_run("port-scanner")
+        run._egress_gate = gate
+        code = run.execute(lambda r: self.fail("scan must not run"))
+        self.assertEqual(code, runmod.EXIT_TIMED_OUT)
+        self.assertEqual([m["outcome"] for m in sink.messages if m["kind"] == "run"], ["timed_out"])
+
+
 class MainTest(unittest.TestCase):
     def test_missing_target_exits_2_without_messages(self):
         with mock.patch.dict(os.environ, {"TARGET": ""}):
