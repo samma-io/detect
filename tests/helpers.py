@@ -37,7 +37,10 @@ def load_scanner(scanner):
 def make_run(scanner, target="example.com"):
     """A ``Run`` whose messages land in the returned list publisher."""
     sink = ListPublisher()
-    run = Run(scanner, target, Emitter([sink]), version="2.0.0-test", run="run-test")
+    # No egress wait: the tests never touch the network, whatever NATS_* the
+    # environment running them happens to carry.
+    run = Run(scanner, target, Emitter([sink]), version="2.0.0-test", run="run-test",
+              egress_gate=lambda: None)
     return run, sink
 
 

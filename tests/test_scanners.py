@@ -6,6 +6,7 @@ import io
 import socket
 import unittest
 import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from samma_finding import netutil
@@ -255,6 +256,13 @@ class HttpRedirectScannerTest(unittest.TestCase):
         self.assertEqual(self.mod.to_url("https://example.com/x"), "https://example.com/x")
         self.assertEqual(self.mod.to_url("2001:db8::1"), "http://[2001:db8::1]")
 
+    def test_default_opener_connects_through_netutil(self):
+        handlers = self.mod.default_opener().handlers
+        self.assertTrue(any(isinstance(h, netutil.HTTPHandler) for h in handlers))
+        self.assertTrue(any(isinstance(h, netutil.HTTPSHandler) for h in handlers))
+        plain = [h for h in handlers if type(h) in (urllib.request.HTTPHandler, urllib.request.HTTPSHandler)]
+        self.assertEqual(plain, [])
+
     def test_http_to_https_is_inventory_only(self):
         code, findings, _b = self.run_chain("example.com", {
             "http://example.com": (301, "https://example.com/"),
@@ -397,6 +405,17 @@ class SshBannerScannerTest(unittest.TestCase):
         def refused(h, p, t):
             raise ConnectionRefusedError(111, "refused")
         code, findings, body = execute("ssh-banner-scanner", lambda run: self.mod.scan(run, self.opts, connect=refused))
+        self.assertEqual((code, findings, body["outcome"]), (0, [], "succeeded"))
+
+    def test_dual_stack_host_without_ssh_is_an_empty_success(self):
+        # ankra-dev 2026-11-05: IPv4 refuses port 22, IPv6 has no route from
+        # the pod. That is "no SSH exposed", not a failed run.
+        def connect(h, p, t):
+            raise netutil.connection_error(h, p, [
+                (V4, ConnectionRefusedError(111, "Connection refused")),
+                (V6, OSError(101, "Network is unreachable")),
+            ])
+        code, findings, body = execute("ssh-banner-scanner", lambda run: self.mod.scan(run, self.opts, connect=connect))
         self.assertEqual((code, findings, body["outcome"]), (0, [], "succeeded"))
 
     def test_unresolvable_is_a_failed_run(self):

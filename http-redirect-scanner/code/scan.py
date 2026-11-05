@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 
 import samma_finding
-from samma_finding import config
+from samma_finding import config, netutil
 from samma_finding.run import describe_exception
 
 SCANNER = "http-redirect-scanner"
@@ -68,7 +68,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def default_opener():
-    return urllib.request.build_opener(_NoRedirect())
+    # netutil's handlers connect with connect_any, so a failure names every
+    # address instead of only the last one tried.
+    return urllib.request.build_opener(_NoRedirect(), netutil.HTTPHandler(), netutil.HTTPSHandler())
 
 
 def follow(start_url, opts, opener=None):

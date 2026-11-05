@@ -1,7 +1,9 @@
 """The run wrapper every scanner's ``main`` goes through.
 
 ``main(scanner, scan)`` reads ``TARGET``, builds the publishers from the
-environment, calls ``scan(run)`` and ends the run exactly once:
+environment, waits until the pod's network lets it out (``netutil.await_egress``:
+a new pod can be refused by NetworkPolicy for its first second), calls
+``scan(run)`` and ends the run exactly once:
 
 * the scan returns: ``outcome=succeeded``;
 * the scan raises: ``outcome=failed`` with the exception class and its short
@@ -16,7 +18,7 @@ import signal
 import sys
 import time
 
-from . import catalog, schema
+from . import catalog, netutil, schema
 from .output import Emitter
 
 EXIT_SUCCEEDED = 0
@@ -36,7 +38,8 @@ class ScanTimedOut(BaseException):
 class Run(object):
     """One scan of one target by one scanner."""
 
-    def __init__(self, scanner, target, emitter, version=None, run=None, clock=None):
+    def __init__(self, scanner, target, emitter, version=None, run=None, clock=None,
+                 egress_gate=None):
         self.scanner = scanner
         self.target = target
         self.emitter = emitter
@@ -50,6 +53,10 @@ class Run(object):
         self.finding_count = 0
         self._finished = False
         self._wall_start = None
+        # Called once before the scan; netutil.await_egress unless a test
+        # passes its own. Its result is kept for the tests.
+        self._egress_gate = egress_gate
+        self.egress = None
 
     # -- findings ---------------------------------------------------------
 
@@ -106,6 +113,8 @@ class Run(object):
         code = EXIT_SUCCEEDED
         try:
             try:
+                gate = self._egress_gate if self._egress_gate is not None else netutil.await_egress
+                self.egress = gate()
                 scan(self)
                 outcome, message = schema.OUTCOME_SUCCEEDED, ""
             except ScanTimedOut as exc:
