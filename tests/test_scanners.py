@@ -3,6 +3,7 @@ third-party modules."""
 
 import email.message
 import io
+import json
 import socket
 import ssl
 import unittest
@@ -237,6 +238,35 @@ class HttpHeadersScannerTest(unittest.TestCase):
         observed = by_id["SAMMA-HEADERS-OBSERVED"]
         self.assertEqual(observed["raw"]["headers"]["x-frame-options"], "DENY")
         self.assertIn("present: strict-transport-security=max-age=31536000", observed["evidence"])
+
+    def test_server_version_banner(self):
+        found = dict((f[0], f[1]) for f in self.mod.classify(
+            {"server": "nginx/1.27.5", "x-powered-by": "PHP/8.2.1"}, https=False))
+        self.assertEqual(found["SAMMA-HEADERS-SERVER-VERSION"], "server: nginx/1.27.5; x-powered-by: PHP/8.2.1")
+        for quiet in ({"server": "nginx"}, {"server": "cloudflare"}, {}):
+            ids = [f[0] for f in self.mod.classify(quiet, https=False)]
+            self.assertNotIn("SAMMA-HEADERS-SERVER-VERSION", ids, quiet)
+
+    def test_cookie_flags(self):
+        cookies = ["session=s3cr3t-value; Path=/", "pref=dark; Path=/; Secure; HttpOnly; SameSite=Lax"]
+        found = dict((f[0], f[1]) for f in self.mod.classify({"set-cookie": cookies}, https=True))
+        evidence = found["SAMMA-HEADERS-COOKIE-FLAGS-MISSING"]
+        self.assertEqual(evidence, "cookie session without Secure, HttpOnly, SameSite")
+        self.assertNotIn("s3cr3t", evidence)
+        # Secure is only expected over HTTPS.
+        self.assertEqual(self.mod.cookie_issues("a=1; HttpOnly; SameSite=Strict", https=False), [])
+        ids = [f[0] for f in self.mod.classify({"set-cookie": cookies[1]}, https=True)]
+        self.assertNotIn("SAMMA-HEADERS-COOKIE-FLAGS-MISSING", ids)
+
+    def test_cookie_values_never_reach_the_record(self):
+        headers = {"set-cookie": ["session=s3cr3t-value; Path=/"]}
+        opts = {"https": True, "port": 443, "timeout": 1}
+        code, findings, _body = execute(
+            "http-headers-scanner",
+            lambda run: self.mod.scan(run, opts, fetch_=lambda target, o: (200, headers)))
+        cookie = {f["checkId"]: f for f in findings}["SAMMA-HEADERS-COOKIE-FLAGS-MISSING"]
+        self.assertEqual(cookie["raw"]["cookies"], [{"name": "session", "missing": ["Secure", "HttpOnly", "SameSite"]}])
+        self.assertNotIn("s3cr3t", json.dumps(findings))
 
     def test_connection_error_is_a_failed_run(self):
         def fetch_(target, opts):
