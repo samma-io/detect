@@ -3,6 +3,12 @@
 The certificate, the negotiated protocol and cipher become findings; the
 verification error, when there is one, is classified too. A connection that
 cannot be made at all ends the run as failed.
+
+The default handshake negotiates the highest version both sides support, so a
+server that still accepts TLS 1.0 next to TLS 1.3 looks like a 1.3-only one.
+Unless ``probe_protocols`` is off, the scanner therefore also tries one
+handshake pinned to each deprecated version (TLS 1.0 and 1.1) and reports the
+ones the server accepts.
 """
 
 import os
@@ -20,6 +26,9 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..
 # client's minimum (TLS 1.2), so the handshake fails instead of negotiating.
 PROTOCOL_TOO_OLD_REASONS = ("UNSUPPORTED_PROTOCOL", "TLSV1_ALERT_PROTOCOL_VERSION")
 
+# Deprecated versions probed with a pinned handshake: (label, ssl.TLSVersion name).
+PROBED_PROTOCOLS = (("TLSv1", "TLSv1"), ("TLSv1.1", "TLSv1_1"))
+
 
 def settings(environ=None, cfg=None):
     """Environment > config.yaml > defaults. Always TLS, so there is no
@@ -30,6 +39,7 @@ def settings(environ=None, cfg=None):
         "port": int(config.setting(env, tls, "port", 443)),
         "timeout": float(config.setting(env, tls, "timeout", 5)),
         "verify_cert": config.truthy(config.setting(env, tls, "verify_cert", True)),
+        "probe_protocols": config.truthy(config.setting(env, tls, "probe_protocols", True)),
     }
 
 
@@ -68,7 +78,8 @@ def classify(observation):
 
     ``observation`` has ``protocol``, ``cipher``, ``cert`` (the dict from
     :func:`parse_certificate` or ``None``), ``verify_error`` and
-    ``protocol_error`` (strings or ``None``).
+    ``protocol_error`` (strings or ``None``), and optionally ``accepted``: the
+    deprecated versions the server accepted in pinned handshakes.
     """
     findings = []
     verify_error = observation.get("verify_error")
@@ -85,8 +96,16 @@ def classify(observation):
                          "handshake failed with %s: the server offers no TLS version "
                          "of 1.2 or newer" % protocol_error))
     protocol = observation.get("protocol")
+    accepted = [p for p in observation.get("accepted") or () if p != protocol]
     if protocol in checks.DEPRECATED_PROTOCOLS:
-        findings.append(("SAMMA-TLS-PROTOCOL-DEPRECATED", "negotiated %s" % protocol))
+        evidence = "negotiated %s" % protocol
+        if accepted:
+            evidence += "; also accepts %s" % ", ".join(accepted)
+        findings.append(("SAMMA-TLS-PROTOCOL-DEPRECATED", evidence))
+    elif accepted and not protocol_error:
+        findings.append(("SAMMA-TLS-PROTOCOL-DEPRECATED",
+                         "accepts %s in a pinned handshake (negotiates %s by default)"
+                         % (", ".join(accepted), protocol or "nothing newer")))
     cipher = observation.get("cipher")
     if is_weak_cipher(cipher):
         findings.append(("SAMMA-TLS-CIPHER-WEAK", "negotiated cipher %s" % cipher))
@@ -151,9 +170,47 @@ def handshake(target, opts, connect=netutil.connect_any):
     return observation, raw
 
 
-def scan(run, opts=None, connect=netutil.connect_any):
+def probe_protocol(target, opts, version, connect=netutil.connect_any):
+    """Whether the server completes a handshake pinned to ``version`` alone.
+
+    The certificate is not checked: the question is whether the version is
+    offered. ``@SECLEVEL=0`` lets the client offer the old versions at all.
+    Any failure, including a client that cannot pin the version, counts as not
+    accepted.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    try:
+        context.set_ciphers("DEFAULT:@SECLEVEL=0")
+        context.minimum_version = version
+        context.maximum_version = version
+    except (ValueError, ssl.SSLError):
+        return False
+    try:
+        sock, _ = connect(target, opts["port"], opts["timeout"])
+        with sock:
+            with context.wrap_socket(sock, server_hostname=target):
+                return True
+    except (OSError, ssl.SSLError):
+        return False
+
+
+def probe_deprecated(target, opts, connect=netutil.connect_any, probe=probe_protocol):
+    """Labels of the deprecated versions the server accepts."""
+    accepted = []
+    for label, name in PROBED_PROTOCOLS:
+        version = getattr(ssl.TLSVersion, name, None)
+        if version is not None and probe(target, opts, version, connect):
+            accepted.append(label)
+    return accepted
+
+
+def scan(run, opts=None, connect=netutil.connect_any, probe=probe_protocol):
     opts = opts or settings()
     observation, raw = handshake(run.target, opts, connect)
+    if opts.get("probe_protocols"):
+        observation["accepted"] = probe_deprecated(run.target, opts, connect, probe)
     endpoint = run.endpoint(port=opts["port"], scheme="https")
     for check_id, evidence in classify(observation):
         run.finding(check_id, endpoint, evidence=evidence, raw=raw)

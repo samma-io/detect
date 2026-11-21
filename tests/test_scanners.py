@@ -4,6 +4,7 @@ third-party modules."""
 import email.message
 import io
 import socket
+import ssl
 import unittest
 import urllib.error
 import urllib.request
@@ -128,6 +129,32 @@ class TlsScannerTest(unittest.TestCase):
                                                 protocol_error="UNSUPPORTED_PROTOCOL")))
         self.assertEqual(list(found), ["SAMMA-TLS-PROTOCOL-DEPRECATED"])
 
+    def test_deprecated_accepted_in_pinned_handshake(self):
+        found = dict(self.mod.classify(self.obs(accepted=["TLSv1", "TLSv1.1"])))
+        self.assertEqual(found["SAMMA-TLS-PROTOCOL-DEPRECATED"],
+                         "accepts TLSv1, TLSv1.1 in a pinned handshake (negotiates TLSv1.3 by default)")
+        negotiated = dict(self.mod.classify(self.obs(protocol="TLSv1", accepted=["TLSv1", "TLSv1.1"])))
+        self.assertEqual(negotiated["SAMMA-TLS-PROTOCOL-DEPRECATED"], "negotiated TLSv1; also accepts TLSv1.1")
+        self.assertNotIn("SAMMA-TLS-PROTOCOL-DEPRECATED", dict(self.mod.classify(self.obs(accepted=[]))))
+
+    def test_probe_deprecated(self):
+        seen = []
+
+        def probe(target, opts, version, connect):
+            seen.append(version)
+            return version == ssl.TLSVersion.TLSv1_1
+
+        opts = {"port": 443, "timeout": 1}
+        self.assertEqual(self.mod.probe_deprecated("example.com", opts, connect=None, probe=probe), ["TLSv1.1"])
+        self.assertEqual(seen, [ssl.TLSVersion.TLSv1, ssl.TLSVersion.TLSv1_1])
+
+    def test_probe_protocol_refused_counts_as_not_accepted(self):
+        def connect(host, port, timeout):
+            raise ConnectionRefusedError(111, "Connection refused")
+
+        opts = {"port": 443, "timeout": 1}
+        self.assertFalse(self.mod.probe_protocol("example.com", opts, ssl.TLSVersion.TLSv1, connect))
+
     def test_expiry(self):
         self.assertIn("SAMMA-TLS-CERT-EXPIRING", dict(self.mod.classify(self.obs(cert=self.cert(10)))))
         self.assertNotIn("SAMMA-TLS-CERT-EXPIRING", dict(self.mod.classify(self.obs(cert=self.cert(15)))))
@@ -155,6 +182,8 @@ class TlsScannerTest(unittest.TestCase):
     def test_settings(self):
         opts = self.mod.settings({"VERIFY_CERT": "false", "PORT": "8443"}, cfg={})
         self.assertEqual((opts["port"], opts["verify_cert"], opts["timeout"]), (8443, False, 5.0))
+        self.assertTrue(opts["probe_protocols"])
+        self.assertFalse(self.mod.settings({"PROBE_PROTOCOLS": "false"}, cfg={})["probe_protocols"])
 
 
 class HttpHeadersScannerTest(unittest.TestCase):
