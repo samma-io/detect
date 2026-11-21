@@ -2,10 +2,13 @@
 
 One HEAD request; each missing header is a finding, and one INFO record
 keeps the inventory of what was present. HSTS is only judged over HTTPS,
-where browsers honour it.
+where browsers honour it. A Server or X-Powered-By header that names a
+version, and cookies set without Secure (over HTTPS), HttpOnly or SameSite,
+are findings too. Cookie values are never recorded, only their names.
 """
 
 import os
+import re
 
 import samma_finding
 from samma_finding import config, netutil
@@ -33,6 +36,11 @@ MISSING_CHECKS = {
 
 VALUE_PREVIEW = 120
 
+# Headers that advertise the software; a digit after a letter or slash in the
+# value (nginx/1.27.5, PHP/8.2.1, Apache/2.4) is a version.
+BANNER_HEADERS = ("server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version")
+VERSION_RE = re.compile(r"[A-Za-z/ ]\d+(\.\d+)+|^\d+(\.\d+)+")
+
 
 def settings(environ=None, cfg=None):
     """Environment > config.yaml > defaults. The port follows the scheme:
@@ -57,7 +65,12 @@ def fetch(target, opts):
     try:
         conn.request("HEAD", "/")
         resp = conn.getresponse()
-        return resp.status, {k.lower(): v for k, v in resp.getheaders()}
+        headers = {k.lower(): v for k, v in resp.getheaders()}
+        # A dict keeps one Set-Cookie; every cookie is judged.
+        cookies = resp.msg.get_all("Set-Cookie") or []
+        if cookies:
+            headers["set-cookie"] = list(cookies)
+        return resp.status, headers
     finally:
         conn.close()
 
@@ -65,6 +78,42 @@ def fetch(target, opts):
 def _preview(value):
     value = " ".join(str(value).split())
     return value if len(value) <= VALUE_PREVIEW else value[:VALUE_PREVIEW] + "..."
+
+
+def cookie_issues(set_cookie, https):
+    """``[(name, [missing attribute, ...])]`` for each Set-Cookie value.
+
+    Secure only counts over HTTPS, where the cookie could be sent in clear
+    otherwise. The cookie value is not returned.
+    """
+    if set_cookie is None:
+        return []
+    values = set_cookie if isinstance(set_cookie, (list, tuple)) else [set_cookie]
+    issues = []
+    for value in values:
+        parts = [p.strip() for p in str(value).split(";")]
+        name = parts[0].split("=", 1)[0].strip() or "(unnamed)"
+        attrs = {p.split("=", 1)[0].strip().lower() for p in parts[1:] if p}
+        missing = []
+        if https and "secure" not in attrs:
+            missing.append("Secure")
+        if "httponly" not in attrs:
+            missing.append("HttpOnly")
+        if "samesite" not in attrs:
+            missing.append("SameSite")
+        if missing:
+            issues.append((name[:64], missing))
+    return issues
+
+
+def version_banners(headers):
+    """``[(header, value)]`` for software headers that name a version."""
+    out = []
+    for header in BANNER_HEADERS:
+        value = headers.get(header)
+        if value and VERSION_RE.search(str(value)):
+            out.append((header, _preview(value)))
+    return out
 
 
 def classify(headers, https, status_code=None):
@@ -86,6 +135,15 @@ def classify(headers, https, status_code=None):
     if xss is not None and str(xss).strip().startswith("1"):
         findings.append(("SAMMA-HEADERS-X-XSS-PROTECTION-ENABLED",
                          "x-xss-protection: %s" % _preview(xss), "x-xss-protection"))
+    banners = version_banners(headers)
+    if banners:
+        findings.append(("SAMMA-HEADERS-SERVER-VERSION",
+                         "; ".join("%s: %s" % b for b in banners), banners[0][0]))
+    issues = cookie_issues(headers.get("set-cookie"), https)
+    if issues:
+        findings.append(("SAMMA-HEADERS-COOKIE-FLAGS-MISSING",
+                         "; ".join("cookie %s without %s" % (n, ", ".join(m)) for n, m in issues),
+                         "set-cookie"))
     present = [h for h in SECURITY_HEADERS if h in headers]
     missing = [h for h in SECURITY_HEADERS if h not in headers]
     summary = "%s; present: %s; missing: %s" % (
@@ -108,6 +166,11 @@ def scan(run, opts=None, fetch_=None):
         raw = dict(base)
         if header is None:
             raw["headers"] = {h: headers.get(h) for h in SECURITY_HEADERS}
+        elif header == "set-cookie":
+            # Names and missing attributes only: a cookie value can be a session token.
+            raw.update({"header": header, "present": True,
+                        "cookies": [{"name": n, "missing": m}
+                                    for n, m in cookie_issues(headers.get("set-cookie"), opts["https"])]})
         else:
             raw.update({"header": header, "present": header in headers,
                         "value": headers.get(header)})

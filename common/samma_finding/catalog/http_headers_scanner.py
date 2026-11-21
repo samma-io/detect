@@ -61,6 +61,22 @@ CHECKS = {
                        "on Content-Security-Policy.",
         "references": [_MDN + "X-XSS-Protection", _OWASP_HEADERS],
     },
+    "SAMMA-HEADERS-SERVER-VERSION": {
+        "severity": "LOW",
+        "title": "Server software version disclosed in a response header",
+        "remediation": "Stop advertising versions: server_tokens off in nginx, "
+                       "ServerTokens Prod in Apache, expose_php = Off in PHP, and remove "
+                       "X-Powered-By and X-AspNet-Version in the framework or the ingress.",
+        "references": [_MDN + "Server", _CHEAT_SHEET],
+    },
+    "SAMMA-HEADERS-COOKIE-FLAGS-MISSING": {
+        "severity": "LOW",
+        "title": "Cookie set without Secure, HttpOnly or SameSite",
+        "remediation": "Set cookies with Secure (always over HTTPS), HttpOnly (unless "
+                       "scripts must read them) and SameSite=Lax or Strict.",
+        "references": [_MDN + "Set-Cookie",
+                       "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html"],
+    },
     "SAMMA-HEADERS-OBSERVED": {
         "severity": "INFO",
         "title": "HTTP security headers observed",
