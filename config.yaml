@@ -25,6 +25,8 @@ tls-scanner:
   port: 443
   timeout: 5
   verify_cert: true
+  # Also try handshakes pinned to TLS 1.0 and 1.1 (two extra connections).
+  probe_protocols: true
 
 http-headers-scanner:
   port: 80

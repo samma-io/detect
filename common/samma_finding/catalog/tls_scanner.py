@@ -1,5 +1,6 @@
 """Checks for tls-scanner. The scanner makes one handshake with a default
-client, so a protocol or cipher finding describes what was negotiated."""
+client, so a cipher finding describes what was negotiated. Deprecated
+protocols are also probed with handshakes pinned to TLS 1.0 and 1.1."""
 
 PREFIX = "SAMMA-TLS-"
 
@@ -14,7 +15,7 @@ _TLS_CHEAT_SHEET = "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Lay
 CHECKS = {
     "SAMMA-TLS-PROTOCOL-DEPRECATED": {
         "severity": "HIGH",
-        "title": "Deprecated TLS protocol version negotiated",
+        "title": "Deprecated TLS protocol version accepted",
         "remediation": "Disable SSLv3, TLS 1.0 and TLS 1.1 in the ingress controller or "
                        "server TLS options and allow TLS 1.2 and 1.3 only.",
         "references": [
