@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from samma_finding import netutil
+from samma_finding import catalog, netutil
 from .helpers import execute, load_scanner, make_run
 
 V6 = netutil.ResolvedAddress(socket.AF_INET6, "2001:db8::10", ("2001:db8::10", 0, 0, 0))
@@ -190,6 +190,18 @@ class TlsScannerTest(unittest.TestCase):
 class HttpHeadersScannerTest(unittest.TestCase):
     def setUp(self):
         self.mod = load_scanner("http-headers-scanner")
+
+    def test_each_missing_header_remediation_names_the_header_that_clears_it(self):
+        checks = catalog.for_scanner("http-headers-scanner")
+        for header, check_id in self.mod.MISSING_CHECKS.items():
+            self.assertIn(header, checks[check_id]["remediation"].lower(), check_id)
+
+    def test_a_report_only_policy_does_not_clear_the_csp_check(self):
+        headers = {"content-security-policy-report-only": "default-src 'self'"}
+        found = [f[0] for f in self.mod.classify(headers, https=True, status_code=200)]
+        self.assertIn("SAMMA-HEADERS-CSP-MISSING", found)
+        remediation = catalog.for_scanner("http-headers-scanner")["SAMMA-HEADERS-CSP-MISSING"]["remediation"]
+        self.assertIn("only the enforced", remediation)
 
     def test_nothing_set_over_https(self):
         found = [f[0] for f in self.mod.classify({}, https=True, status_code=200)]
