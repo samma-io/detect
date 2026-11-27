@@ -20,8 +20,10 @@ CHECKS = {
     "SAMMA-HEADERS-CSP-MISSING": {
         "severity": "LOW",
         "title": "Content-Security-Policy header is missing",
-        "remediation": "Define a Content-Security-Policy that restricts script, style and "
-                       "frame sources; start in report-only mode and tighten it.",
+        "remediation": "Send a Content-Security-Policy header that restricts script, style "
+                       "and frame sources. A Content-Security-Policy-Report-Only header is a "
+                       "way to test a policy first, but only the enforced "
+                       "Content-Security-Policy header clears this check.",
         "references": [_MDN + "Content-Security-Policy", _CHEAT_SHEET],
     },
     "SAMMA-HEADERS-X-CONTENT-TYPE-OPTIONS-MISSING": {
